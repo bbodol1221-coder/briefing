@@ -126,6 +126,7 @@ button.badge{border:0;cursor:pointer}
 .chips{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;margin-bottom:4px;scrollbar-width:none}
 .chip{flex:none;display:inline-flex;align-items:center;height:30px;border:0;border-radius:15px;padding:0 12px;font-size:13px;font-weight:600;background:var(--fill);color:var(--t3);cursor:pointer}
 .chip[aria-pressed="true"]{background:var(--blue);color:#fff}
+.chip .arr{margin-left:3px;font-size:11px}
 .news{list-style:none;margin:0;padding:0}
 .news li{padding:14px 0;border-top:1px solid var(--divider);display:grid;gap:4px}
 .news li:first-child{border-top:0}
@@ -216,6 +217,7 @@ button.badge{border:0;cursor:pointer}
 
     <div class="card">
       <div class="card-h"><h2>보유 종목</h2><span class="aside" id="priceAsOf"></span></div>
+      <div class="chips" id="sortChips" role="group" aria-label="정렬 기준"></div>
       <ul class="list" id="hList"><li class="empty">보유 종목을 불러오는 중입니다.</li></ul>
     </div>
 
@@ -360,9 +362,35 @@ function renderRun(){
 }
 $("runBadge").onclick = () => { const log = $("runLog"); log.hidden = !log.hidden; $("runBadge").setAttribute("aria-expanded", String(!log.hidden)); };
 
+/* 정렬: 같은 칩을 다시 누르면 오름/내림 전환. 금액 기준은 관리자에게만 보인다 */
+const SORTS = [
+  {k:"name", label:"이름", get:h => h.name_ko || h.ticker, asc:true},
+  {k:"close", label:"현재가", get:h => h.close},
+  {k:"pnl_pct", label:"손익률", get:h => h.pnl_pct},
+  {k:"change_pct", label:"전일 대비", get:h => h.change_pct},
+  {k:"market_value", label:"평가금액", get:h => h.market_value, admin:true},
+  {k:"pnl", label:"손익액", get:h => h.pnl, admin:true}];
+let sortBy = null;
+try { sortBy = JSON.parse(localStorage.getItem("sort")); } catch(e){}
+function sortedHoldings(H){
+  const avail = SORTS.filter(o => isAdmin || !o.admin);
+  if (!sortBy || !avail.some(o => o.k === sortBy.k)) sortBy = isAdmin ? {k:"market_value", asc:false} : {k:"name", asc:true};
+  const o = SORTS.find(x => x.k === sortBy.k), dir = sortBy.asc ? 1 : -1;
+  $("sortChips").replaceChildren(...avail.map(x => {
+    const on = x.k === sortBy.k;
+    const c = el("button",{class:"chip",type:"button","aria-pressed":String(on),title: on ? (sortBy.asc ? "오름차순" : "내림차순") : ""}, x.label, on ? el("span",{class:"arr",text: sortBy.asc ? "▲" : "▼"}) : null);
+    c.onclick = () => { sortBy = on ? {k:x.k, asc:!sortBy.asc} : {k:x.k, asc:!!x.asc}; try { localStorage.setItem("sort", JSON.stringify(sortBy)); } catch(e){} renderHoldings(); };
+    return c;
+  }));
+  return [...H].sort((a,b) => {
+    const va = o.get(a), vb = o.get(b);
+    if (va == null) return vb == null ? 0 : 1; if (vb == null) return -1;   // 값 없는 종목은 항상 뒤로
+    return (typeof va === "string" ? va.localeCompare(vb, "ko") : va - vb) * dir;
+  });
+}
 function renderHoldings(){
   const H = state.holdings, list = $("hList");
-  const rows = H.map(h => {
+  const rows = sortedHoldings(H).map(h => {
     const r = el("button",{class:"row",type:"button"},
       avatar(h.ticker),
       el("div",{class:"mid"}, el("div",{class:"nm",text:h.name_ko || h.ticker}), el("div",{class:"sub num",text: isAdmin ? `${h.ticker} · ${(+h.quantity).toLocaleString("en-US")}주` : h.ticker})),
