@@ -365,6 +365,7 @@ $("runBadge").onclick = () => { const log = $("runLog"); log.hidden = !log.hidde
 /* 정렬: 같은 칩을 다시 누르면 오름/내림 전환. 금액 기준은 관리자에게만 보인다 */
 const SORTS = [
   {k:"name", label:"이름", get:h => h.name_ko || h.ticker, asc:true},
+  {k:"ticker", label:"티커", get:h => h.ticker, asc:true},
   {k:"close", label:"현재가", get:h => h.close},
   {k:"pnl_pct", label:"손익률", get:h => h.pnl_pct},
   {k:"change_pct", label:"전일 대비", get:h => h.change_pct},
