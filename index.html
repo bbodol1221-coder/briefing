@@ -79,6 +79,16 @@ button,input,select{font:inherit;color:inherit;letter-spacing:inherit}
 .icon-btn:hover{background:var(--fill)}
 .date-sel{border:0;background:var(--fill);border-radius:10px;padding:7px 10px;font-size:14px;font-weight:600;color:var(--t3);cursor:pointer}
 
+/* 환율 줄과 $ / ₩ 토글 */
+.fxbar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:-6px}
+.fx{font-size:12px;color:var(--t5);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fx .up,.fx .down,.fx .flat{font-weight:600}
+.cur{flex:none;display:inline-grid;grid-template-columns:1fr 1fr;background:var(--fill);border-radius:9px;padding:2px;gap:2px}
+.cur button{border:0;background:transparent;border-radius:7px;min-width:30px;height:24px;font-size:12px;font-weight:700;color:var(--t5);cursor:pointer}
+.cur button[aria-pressed="true"]{background:var(--seg-on);color:var(--t1);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.cur button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.fxnote{margin-top:8px;font-size:12px;color:var(--t5)}
+
 /* 세그먼트 탭 */
 .seg{display:grid;grid-template-columns:1fr 1fr;background:var(--fill);border-radius:14px;padding:4px;gap:4px}
 .seg button{border:0;background:transparent;border-radius:10px;padding:9px 0;font-weight:600;color:var(--t5);cursor:pointer;transition:background .15s,color .15s}
@@ -196,6 +206,14 @@ button.badge{border:0;cursor:pointer}
     </div>
   </div>
 
+  <div class="fxbar">
+    <span class="fx num" id="fxText">환율 확인 중</span>
+    <div class="cur" id="curSeg" role="group" aria-label="표시 통화" hidden>
+      <button type="button" data-c="usd" aria-pressed="true" aria-label="달러로 보기">$</button>
+      <button type="button" data-c="krw" aria-pressed="false" aria-label="원화로 보기">₩</button>
+    </div>
+  </div>
+
   <div class="seg" role="tablist">
     <button role="tab" id="t-stock" aria-selected="true" aria-controls="p-stock">주식<span class="cnt" id="n-stock"></span></button>
     <button role="tab" id="t-news" aria-selected="false" aria-controls="p-news">뉴스<span class="cnt" id="n-news"></span></button>
@@ -219,6 +237,7 @@ button.badge{border:0;cursor:pointer}
       <div class="card-h"><h2>보유 종목</h2><span class="aside" id="priceAsOf"></span></div>
       <div class="chips" id="sortChips" role="group" aria-label="정렬 기준"></div>
       <ul class="list" id="hList"><li class="empty">보유 종목을 불러오는 중입니다.</li></ul>
+      <div class="fxnote" id="fxNote" hidden>오늘 환율 단순 환산, 환차손익 미반영</div>
     </div>
 
     <div class="card" id="relCard">
@@ -291,16 +310,27 @@ button.badge{border:0;cursor:pointer}
 const SB_URL = "https://cljmbjysbhffphoocija.supabase.co";
 const SB_KEY = "sb_publishable_jNF4j63vjUm-5GtSoT0T3g_7xUb-ixZ";
 const sb = window.supabase.createClient(SB_URL, SB_KEY);
-let isAdmin = false, state = {holdings:[], news:[], runs:[], dates:[]}, selDate = null, tickerFilter = null, editing = null, sellArmed = false, showAllMarket = false;
+let isAdmin = false, state = {holdings:[], news:[], runs:[], fx:[], dates:[]}, selDate = null, tickerFilter = null, editing = null, sellArmed = false, showAllMarket = false;
 const $ = id => document.getElementById(id);
 const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); for (const [k,v] of Object.entries(props)) { if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k === "style") e.style.cssText = v; else e.setAttribute(k, v); } kids.flat().forEach(k => k != null && k !== false && e.append(k)); return e; };
 const usd = (v, sign) => v == null || isNaN(v) ? "–" : (sign && v > 0 ? "+" : v < 0 ? "-" : "") + "$" + Math.abs(+v).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+/* 금액 표시는 formatMoney 하나로. ₩는 오늘 환율 단순 환산(원 단위 반올림)이라 환차손익은 반영하지 않는다 */
+function formatMoney(v, mode, rate, sign){
+  if (v == null || isNaN(v)) return "–";
+  if (mode !== "krw" || !rate) return usd(v, sign);
+  const w = Math.round(+v * rate);
+  return (sign && w > 0 ? "+" : w < 0 ? "-" : "") + "₩" + Math.abs(w).toLocaleString("ko-KR");
+}
+let curMode = "usd";
+try { if (localStorage.getItem("briefing.currency") === "krw") curMode = "krw"; } catch(e){}
+const fxRate = () => state.fx && state.fx[0] ? +state.fx[0].rate : null;
+const money = (v, sign) => formatMoney(v, curMode, fxRate(), sign);
 const pct = v => v == null || isNaN(v) ? "–" : (v > 0 ? "+" : v < 0 ? "-" : "") + Math.abs(+v).toFixed(2) + "%";
 const tone = v => v == null || Math.abs(+v) < 1e-9 ? "flat" : (+v > 0 ? "up" : "down");
 const AV_COLORS = ["#3182f6","#f04452","#03b26c","#8b5cf6","#fe9800","#00a4b4","#e5508f","#4e5968"];
 const avColor = t => AV_COLORS[[...t].reduce((a,c) => a + c.charCodeAt(0), 0) % AV_COLORS.length];
 const avatar = t => el("span",{class:"avatar",style:`background:${avColor(t)}`,text:t.slice(0,4)});
-const STEP_KO = {inbox:"메일함 정리",mail:"브리핑 메일",kakao:"카카오톡",prices:"종가",av_news:"종목 뉴스",db_news:"뉴스레터 저장"};
+const STEP_KO = {inbox:"메일함 정리",mail:"브리핑 메일",kakao:"카카오톡",prices:"종가",fx:"환율",av_news:"종목 뉴스",db_news:"뉴스레터 저장"};
 
 async function rpc(fn, args){
   const {data, error} = await sb.rpc(fn, args || {});
@@ -330,7 +360,7 @@ async function load(){
     const d = await rpc("public_dashboard");
     isAdmin = !!d.is_admin; document.body.classList.toggle("admin", isAdmin);
     $("adminBtn").style.color = isAdmin ? "var(--blue)" : "";
-    state.holdings = d.holdings || []; state.news = d.news || []; state.runs = d.runs || [];
+    state.holdings = d.holdings || []; state.news = d.news || []; state.runs = d.runs || []; state.fx = d.fx || [];
     state.dates = [...new Set(state.news.map(n => n.brief_date))];
     if (!selDate || !state.dates.includes(selDate)) selDate = state.dates[0] || null;
     banner(null); render();
@@ -341,7 +371,7 @@ function render(){
   const ds = $("dateSel");
   ds.replaceChildren(...(state.dates.length ? state.dates.map(d => el("option",{value:d,text:d.slice(5).replace("-","/")})) : [el("option",{text:"기록 없음"})]));
   if (selDate) ds.value = selDate;
-  renderRun(); renderHoldings(); renderNews();
+  renderFx(); renderRun(); renderHoldings(); renderNews();
 }
 
 function renderRun(){
@@ -361,6 +391,25 @@ function renderRun(){
   }));
 }
 $("runBadge").onclick = () => { const log = $("runLog"); log.hidden = !log.hidden; $("runBadge").setAttribute("aria-expanded", String(!log.hidden)); };
+
+function renderFx(){
+  const fx = state.fx || [], t = $("fxText"), seg = $("curSeg");
+  if (!fx.length) { t.textContent = "환율 없음"; seg.hidden = true; curMode = "usd"; }
+  else {
+    // 주말과 휴일에는 새 행이 없으므로 가장 최근 rate_date를 쓰고 기준일을 같이 보여준다
+    const r = +fx[0].rate, d = fx[1] ? r - fx[1].rate : null;
+    const n = v => v.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
+    t.replaceChildren("USD/KRW " + n(r) + " ", d == null ? "" : el("span",{class:tone(d),text:(d > 0 ? "▲" : d < 0 ? "▼" : "") + n(Math.abs(d))}), ` · ${fx[0].rate_date.slice(5).replace("-","/")} 기준`);
+    seg.hidden = false;
+  }
+  seg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.c === curMode)));
+  $("fxNote").hidden = curMode !== "krw";
+}
+$("curSeg").onclick = e => {
+  const b = e.target.closest("button"); if (!b || b.dataset.c === curMode) return;
+  curMode = b.dataset.c; try { localStorage.setItem("briefing.currency", curMode); } catch(e){}
+  renderFx(); renderHoldings();
+};
 
 /* 정렬: 같은 칩을 다시 누르면 오름/내림 전환. 금액 기준은 관리자에게만 보인다 */
 const SORTS = [
@@ -395,8 +444,8 @@ function renderHoldings(){
     const r = el("button",{class:"row",type:"button"},
       avatar(h.ticker),
       el("div",{class:"mid"}, el("div",{class:"nm",text:h.name_ko || h.ticker}), el("div",{class:"sub num",text: isAdmin ? `${h.ticker} · ${(+h.quantity).toLocaleString("en-US")}주` : h.ticker})),
-      el("div",{class:"rt"}, isAdmin ? [el("div",{class:"val num",text:usd(h.market_value)}), el("div",{class:`chg num ${tone(h.pnl)}`,text: h.pnl == null ? "종가 수집 전" : `${usd(h.pnl,true)} (${pct(h.pnl_pct).replace(/^[+-]/,"")})`})]
-        : [el("div",{class:"val num",text:usd(h.close)}), el("div",{class:`chg num ${tone(h.pnl_pct)}`,text: h.pnl_pct == null ? "종가 수집 전" : `손익 ${pct(h.pnl_pct)}`})]));
+      el("div",{class:"rt"}, isAdmin ? [el("div",{class:"val num",text:money(h.market_value)}), el("div",{class:`chg num ${tone(h.pnl)}`,text: h.pnl == null ? "종가 수집 전" : `${money(h.pnl,true)} (${pct(h.pnl_pct).replace(/^[+-]/,"")})`})]
+        : [el("div",{class:"val num",text:money(h.close)}), el("div",{class:`chg num ${tone(h.pnl_pct)}`,text: h.pnl_pct == null ? "종가 수집 전" : `손익 ${pct(h.pnl_pct)}`})]));
     r.onclick = () => openSheet(h);
     return el("li",{}, r);
   });
@@ -409,10 +458,10 @@ function renderHoldings(){
   const cost = H.reduce((s,h) => s + (h.avg_cost ? h.avg_cost * h.quantity : 0), 0);
   const pnl = H.reduce((s,h) => s + (+h.pnl || 0), 0);
   const prev = H.reduce((s,h) => s + (h.close && h.change_pct != null ? h.quantity * h.close / (1 + h.change_pct/100) : 0), 0);
-  $("k-mv").textContent = H.length ? usd(mv) : "$0.00";
-  const kp = $("k-pnl"); kp.className = "pnl num " + tone(pnl); kp.textContent = cost ? `${usd(pnl,true)} (${pct(pnl / cost * 100)})` : "";
-  const kd = $("k-day"), dd = mv - prev; kd.className = "v num " + tone(dd); kd.textContent = prev ? `${usd(dd,true)} (${pct(dd / prev * 100)})` : "–";
-  $("k-costK").textContent = "원금"; $("k-cost").textContent = cost ? usd(cost) : "–";
+  $("k-mv").textContent = H.length ? money(mv) : money(0);
+  const kp = $("k-pnl"); kp.className = "pnl num " + tone(pnl); kp.textContent = cost ? `${money(pnl,true)} (${pct(pnl / cost * 100)})` : "";
+  const kd = $("k-day"), dd = mv - prev; kd.className = "v num " + tone(dd); kd.textContent = prev ? `${money(dd,true)} (${pct(dd / prev * 100)})` : "–";
+  $("k-costK").textContent = "원금"; $("k-cost").textContent = cost ? money(cost) : "–";
   const asOf = H.map(h => h.price_date).filter(Boolean).sort().pop();
   $("priceAsOf").textContent = asOf ? asOf.slice(5).replace("-","/") + " 종가" : "";
 }
@@ -478,7 +527,7 @@ function openSheet(h){
   const head = $("shHead"), stats = $("shStats");
   if (h) {
     head.replaceChildren(avatar(h.ticker), el("div",{}, el("h3",{id:"shTitle",text:h.name_ko || h.ticker}), el("div",{class:"sub",text: isAdmin ? `${h.ticker} · ${(+h.quantity).toLocaleString("en-US")}주 보유` : h.ticker})));
-    stats.replaceChildren(stat("현재가", usd(h.close)), stat("전일 대비", pct(h.change_pct), tone(h.change_pct)), ...(isAdmin ? [stat("평균단가", usd(h.avg_cost)), stat("평가손익", h.pnl == null ? "–" : `${usd(h.pnl,true)}`, tone(h.pnl))] : [stat("손익률", pct(h.pnl_pct), tone(h.pnl_pct))]));
+    stats.replaceChildren(stat("현재가", money(h.close)), stat("전일 대비", pct(h.change_pct), tone(h.change_pct)), ...(isAdmin ? [stat("평균단가", usd(h.avg_cost)), stat("평가손익", h.pnl == null ? "–" : `${money(h.pnl,true)}`, tone(h.pnl))] : [stat("손익률", pct(h.pnl_pct), tone(h.pnl_pct))]));
     stats.hidden = false; $("tickerField").hidden = true;
     $("f-ticker").value = h.ticker; $("f-qty").value = h.quantity; $("f-cost").value = h.avg_cost ?? ""; $("f-name").value = h.name_ko || ""; $("f-alias").value = (h.aliases || []).join(", ");
     const n = state.news.filter(x => x.brief_date === selDate && (x.tickers || []).includes(h.ticker)).length;
